@@ -34,7 +34,7 @@ def add_argument(parser):
     assert isinstance(parser, argparse.ArgumentParser)
     # Required parameters
     parser.add_argument("--do_train",
-                        action='store_true',
+                        action='store_false',
                         help="Whether to run training.")
     parser.add_argument("-e", "--do_eval",
                         action='store_true',
@@ -42,16 +42,16 @@ def add_argument(parser):
     parser.add_argument("--do_test",
                         action='store_true')
     parser.add_argument("--data_dir",
-                        default='train/data/',
+                        default='/media/zetlin/Data2/Argoverse2/val',
                         type=str)
     parser.add_argument("--data_dir_for_val",
                         default='val/data/',
                         type=str)
-    parser.add_argument("--output_dir", default="tmp/", type=str)
+    parser.add_argument("--output_dir", default="/home/zetlin/argoverse2", type=str)
     parser.add_argument("--log_dir", default=None, type=str)
     parser.add_argument("--temp_file_dir", default=None, type=str)
     parser.add_argument("--train_batch_size",
-                        default=64,
+                        default=32,  # 64
                         type=int,
                         help="Total batch size for training.")
 
@@ -80,7 +80,7 @@ def add_argument(parser):
                         action='store_true',
                         help="Whether not to use CUDA when available")
     parser.add_argument("--hidden_size",
-                        default=64,
+                        default=128,  # 128
                         type=int)
     parser.add_argument("--hidden_dropout_prob",
                         default=0.1,
@@ -101,14 +101,14 @@ def add_argument(parser):
                         type=int)
     parser.add_argument("-d", "--distributed_training",
                         nargs='?',
-                        default=8,
+                        default=1,
                         const=4,
                         type=int)
     parser.add_argument("--cuda_visible_device_num",
                         default=None,
                         type=int)
-    parser.add_argument("--use_map",
-                        action='store_true')
+    parser.add_argument("--use_map",  # true
+                        action='store_false')
     parser.add_argument("--reuse_temp_file",
                         action='store_true')
     parser.add_argument("--old_version",
@@ -122,8 +122,15 @@ def add_argument(parser):
                         action='store_true')
     parser.add_argument("--other_params",
                         nargs='*',
-                        default=[],
+                        default=['semantic_lane','direction','l1_loss','goals_2D','enhance_global_graph',
+                                 'subdivide','goal_scoring','laneGCN','point_sub_graph','lane_scoring',
+                                 'complete_traj','complete_traj-3'], # 
                         type=str)
+    # semantic_lane direction l1_loss  
+    # goals_2D enhance_global_graph 
+    # subdivide goal_scoring 
+    # laneGCN point_sub_graph 
+    # lane_scoring complete_traj complete_traj-3
     parser.add_argument("-ep", "--eval_params",
                         nargs='*',
                         default=[],
@@ -135,14 +142,14 @@ def add_argument(parser):
     parser.add_argument("--not_use_api",
                         action='store_true')
     parser.add_argument("--core_num",
-                        default=1,
+                        default=16,  # 16
                         type=int)
     parser.add_argument("--visualize",
                         action='store_true')
     parser.add_argument("--train_extra",
                         action='store_true')
     parser.add_argument("--use_centerline",
-                        action='store_true')
+                        action='store_false')
     parser.add_argument("--autoregression",
                         nargs='?',
                         default=None,
@@ -179,13 +186,13 @@ def add_argument(parser):
     parser.add_argument("--waymo",
                         action='store_true')
     parser.add_argument("--argoverse",
-                        action='store_true')
+                        action='store_false')
     parser.add_argument("--argoverse2",
-                        action='store_true')
+                        action='store_false')
     parser.add_argument("--nuscenes",
                         action='store_true')
     parser.add_argument("--future_frame_num",
-                        default=80,
+                        default=60,  #  60
                         type=int)
     parser.add_argument("--future_test_frame_num",
                         default=16,
@@ -1711,7 +1718,7 @@ class Normalizer:
         self.yaw = yaw
         self.origin = rotate(0.0 - x, 0.0 - y, yaw)
 
-    def __call__(self, points, reverse=False):
+    def __call__(self, points, reverse=False): # reverse:
         points = np.array(points)
         assert 1 <= len(points.shape) <= 3 and 2 <= points.shape[-1] <= 3
         if len(points.shape) == 3:

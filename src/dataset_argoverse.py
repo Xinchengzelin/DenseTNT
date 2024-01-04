@@ -19,6 +19,7 @@ import utils
 from utils import get_name, get_file_name_int, get_angle, logging, rotate, round_value, get_pad_vector, get_dis, get_subdivide_polygons
 from utils import get_points_remove_repeated, get_one_subdivide_polygon, get_dis_point_2_polygons, larger, equal, assert_
 from utils import get_neighbour_points, get_subdivide_points, get_unit_vector, get_dis_point_2_points
+import traceback
 
 TIMESTAMP = 0
 TRACK_ID = 1
@@ -341,7 +342,7 @@ def preprocess(args, id2info, mapping):
     return mapping
 
 
-def get_mark_type_to_int():
+def get_mark_type_to_int():# 把mark_type转成int
     from av2.map.lane_segment import LaneMarkType
     mark_types = [LaneMarkType.DASH_SOLID_YELLOW,
                   LaneMarkType.DASH_SOLID_WHITE,
@@ -382,7 +383,7 @@ def argoverse2_load_map(instance_dir):
     return ArgoverseStaticMap.from_json(vector_data_fname)
 
 
-def argoverse2_get_instance(args: utils.Args, instance_dir):
+def argoverse2_get_instance(args: utils.Args, instance_dir):#instance_dir: 对应的一条数据的文件夹
     from av2.datasets.motion_forecasting import data_schema
     from av2.datasets.motion_forecasting.data_schema import ObjectType
 
@@ -408,11 +409,11 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
         tracks = []
         focal_track = None
         for track in scenario.tracks:
-            if track.category == data_schema.TrackCategory.FOCAL_TRACK:
+            if track.category == data_schema.TrackCategory.FOCAL_TRACK: # focal_track
                 assert track.track_id == scenario.focal_track_id
                 focal_track = track
             else:
-                tracks.append(track)
+                tracks.append(track) # 其他track
         assert focal_track is not None
         tracks = [focal_track] + tracks
 
@@ -426,14 +427,17 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
         angle = None
         normalizer = None
 
-        assert len(focal_track.object_states) == 110
-        for timestep, state in enumerate(focal_track.object_states):
+        if len(focal_track.object_states) != 110:
+            return None
+
+        assert len(focal_track.object_states) == 110, f"{len(focal_track.object_states)} {instance_dir}" # 多少帧数据  里面包括position, heading, velocity
+        for timestep, state in enumerate(focal_track.object_states): # 处理自车轨迹
             assert timestep == state.timestep
             # current timestep
             if state.timestep == 50 - 1:
                 cent_x = state.position[0]
                 cent_y = state.position[1]
-                angle = -state.heading + math.radians(90)
+                angle = -state.heading + math.radians(90) # math.radians将角度转为弧度
                 normalizer = utils.Normalizer(cent_x, cent_y, angle)
             elif state.timestep >= 50:
                 labels.append(normalizer((state.position[0], state.position[1])))
@@ -447,12 +451,12 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
             normalizer=normalizer,
         ))
 
-    for track in tracks:
+    for track in tracks: # 增加所有障碍物（focal + 其他）历史轨迹，第1个是focal track
         assert isinstance(track, data_schema.Track)
         start = len(vectors)
 
-        agent = []
-        timestep_to_state = {}
+        agent = [] # 转换好的轨迹坐标
+        timestep_to_state = {} # 障碍物的历史轨迹
         for state in track.object_states:
             if state.observed:
                 assert state.timestep < 50
@@ -481,8 +485,8 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
                         vector[offset + j * 3], vector[offset + j * 3 + 1] = normalizer((t[0], t[1]))
                         vector[offset + j * 3 + 2] = 1
 
-                i += 4
-                vectors.append(vector[::-1])
+                i += 4 # 增加4
+                vectors.append(vector[::-1]) # ！！！逆序排列，时间越新越靠前
             else:
                 i += 1
 
@@ -498,10 +502,10 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
 
         lane_type_to_int = defaultdict(int)
         lane_type_to_int[LaneType.VEHICLE] = 1
-        lane_type_to_int[LaneType.BIKE] = 1
-        lane_type_to_int[LaneType.BUS] = 1
+        lane_type_to_int[LaneType.BIKE] = 2 #TODO 这里是否有问题，应该2,3
+        lane_type_to_int[LaneType.BUS] = 3
 
-        mark_type_to_int = get_mark_type_to_int()
+        mark_type_to_int = get_mark_type_to_int() # 把mark_type转换成int 15种类型 1 2 3... 15
 
         argoverse2_map = argoverse2_load_map(instance_dir)
         for lane_segment in argoverse2_map.vector_lane_segments.values():
@@ -524,7 +528,7 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
                             vector[offset + j * 2] = polyline[i + j, 0]
                             vector[offset + j * 2 + 1] = polyline[i + j, 1]
 
-                    vectors.append(vector)
+                    vectors.append(vector) # TODO 为什么在这里？
 
                     offset = 30
                     vector[offset + mark_type_to_int[lane_segment.left_mark_type]] = 1
@@ -539,7 +543,7 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
             if end > start:
                 polyline_spans.append([start, end])
 
-        argoverse2_map.get_scenario_lane_segment_ids()
+        argoverse2_map.get_scenario_lane_segment_ids() # 得到地图里的所有lane ids
 
         if 'goals_2D' in args.other_params:
             points = []
@@ -560,13 +564,13 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
                     subdivide_points = get_subdivide_points(polygon)
                     points.extend(subdivide_points)
 
-            mapping['goals_2D'] = np.array(points)
+            mapping['goals_2D'] = np.array(points) # 调试时某个点 (5506, 2） 应该就是lane boudary组成的dense goals
 
         pass
 
     if 'goals_2D' in args.other_params:
         point_label = np.array(labels[-1])
-        mapping['goals_2D_labels'] = np.argmin(get_dis(mapping['goals_2D'], point_label))
+        mapping['goals_2D_labels'] = np.argmin(get_dis(mapping['goals_2D'], point_label)) # 第796个goal是gt
 
         if 'lane_scoring' in args.other_params:
             stage_one_label = 0
@@ -576,26 +580,33 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):
                 if temp < min_dis:
                     min_dis = temp
                     # A lane consists of two left polyline and right polyline
-                    stage_one_label = i // 2
+                    stage_one_label = i // 2 
 
-            mapping['stage_one_label'] = stage_one_label
+            mapping['stage_one_label'] = stage_one_label # 大概为gt位于第多少个lane
 
     # print(len(polyline_spans), len(vectors), map_start_polyline_idx, polyline_spans[map_start_polyline_idx])
 
     mapping.update(dict(
-        matrix=np.array(vectors),
-        labels=np.array(labels).reshape([args.future_frame_num, 2]),
-        gt_trajectory_global_coordinates=np.array(gt_trajectory_global_coordinates),
-        polyline_spans=[slice(each[0], each[1]) for each in polyline_spans],
-        labels_is_valid=np.ones(args.future_frame_num, dtype=np.int64),
+        matrix=np.array(vectors), # 1030*128
+        labels=np.array(labels).reshape([args.future_frame_num, 2]), # 60*2， 障碍物坐标系
+        gt_trajectory_global_coordinates=np.array(gt_trajectory_global_coordinates), # 60*2 全局坐标系
+        polyline_spans=[slice(each[0], each[1]) for each in polyline_spans], # 109个
+        labels_is_valid=np.ones(args.future_frame_num, dtype=np.int64), # 60
         eval_time=60,
 
         agents=agents,
-        map_start_polyline_idx=map_start_polyline_idx,
+        map_start_polyline_idx=map_start_polyline_idx,  # 地图开始的polyline_idx
         polygons=polygons,
         file_name=os.path.split(instance_dir)[-1],
         trajs=agents,
         vis_lanes=polygons,
+        # goals_2D_labels: 第多少个goal是gt
+        # stage_one_label: 大概为gt位于第多少个lane
+        # goals_2D 调试时某个点 (5506, 2） 应该就是lane boudary组成的dense goals
+        # cent_x=cent_x,
+        # cent_y=cent_y,
+        # angle=angle,
+        # normalizer=normalizer
     ))
 
     return mapping
@@ -722,10 +733,10 @@ class Dataset(torch.utils.data.Dataset):
                                       file.endswith("csv") and not file.startswith('.')])
                 print(files[:5], files[-5:])
 
-                pbar = tqdm(total=len(files))
+                pbar = tqdm(total=len(files),desc="get_instance")
 
                 queue = multiprocessing.Queue(args.core_num)
-                queue_res = multiprocessing.Queue()
+                queue_res = multiprocessing.Queue() # 存放处理的结果
 
                 def calc_ex_list(queue, queue_res, args):
                     res = []
@@ -744,7 +755,7 @@ class Dataset(torch.utils.data.Dataset):
                                 queue_res.put(None)
 
                         if args.argoverse2:
-                            instance = argoverse2_get_instance(args, file)
+                            instance = argoverse2_get_instance(args, file) # 得到mapping
                             put_instance_in_queue(instance)
                         else:
                             if file.endswith("csv"):
@@ -753,7 +764,15 @@ class Dataset(torch.utils.data.Dataset):
                                 instance = argoverse_get_instance(lines, file, args)
                                 put_instance_in_queue(instance)
 
-                processes = [Process(target=calc_ex_list, args=(queue, queue_res, args,)) for _ in range(args.core_num)]
+                def calc_ex_list_catch(queue, queue_res, args):
+                    try: 
+                        calc_ex_list(queue, queue_res,args)
+                    except Exception as e:
+                        print(e)
+                        traceback.print_exc()
+                        raise
+                
+                processes = [Process(target=calc_ex_list_catch, args=(queue, queue_res, args,)) for _ in range(args.core_num)]
                 for each in processes:
                     each.start()
                 # res = pool.map_async(calc_ex_list, [queue for i in range(args.core_num)])
@@ -768,22 +787,26 @@ class Dataset(torch.utils.data.Dataset):
 
                 pbar.close()
 
+                print("finished queue!!")
+
+                # 计算 self.ex_list?
                 self.ex_list = []
 
-                pbar = tqdm(total=len(files))
+                pbar = tqdm(total=len(files),desc="result")
                 for i in range(len(files)):
                     t = queue_res.get()
                     if t is not None:
                         self.ex_list.append(t)
                     pbar.update(1)
                 pbar.close()
-                pass
+                while not queue_res.empty():
+                    pass
+                print("%"*20,"finished queue_res!!", len(self.ex_list))
 
-                for i in range(args.core_num):
+                for i in range(args.core_num): # TODO 为什么有这几个？
                     queue.put(None)
                 for each in processes:
                     each.join()
-
             else:
                 assert False
 

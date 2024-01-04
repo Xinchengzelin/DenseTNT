@@ -44,7 +44,7 @@ class Decoder(nn.Module):
         args = args_
         hidden_size = args.hidden_size
         self.future_frame_num = args.future_frame_num
-        self.mode_num = args.mode_num
+        self.mode_num = args.mode_num # 6
 
         self.decoder = DecoderRes(hidden_size, out_features=2)
 
@@ -80,7 +80,7 @@ class Decoder(nn.Module):
                     model_recover = torch.load(args.model_recover_path)
                 vectornet.decoder = self
                 utils.load_model(vectornet, model_recover)
-                # self must be vectornet
+                # self must be vectornet #TODO 注意
                 for p in vectornet.parameters():
                     p.requires_grad = False
 
@@ -97,14 +97,14 @@ class Decoder(nn.Module):
         def get_stage_one_scores():
             stage_one_hidden = lane_states_batch[i]
             stage_one_hidden_attention = self.stage_one_cross_attention(
-                stage_one_hidden.unsqueeze(0), inputs[i][:inputs_lengths[i]].unsqueeze(0)).squeeze(0)
+                stage_one_hidden.unsqueeze(0), inputs[i][:inputs_lengths[i]].unsqueeze(0)).squeeze(0) #lane_num * 128
             stage_one_scores = self.stage_one_decoder(torch.cat([hidden_states[i, 0, :].unsqueeze(0).expand(
-                stage_one_hidden.shape), stage_one_hidden, stage_one_hidden_attention], dim=-1))
+                stage_one_hidden.shape), stage_one_hidden, stage_one_hidden_attention], dim=-1))#DecoderResCat 输入 lane_num*384
             stage_one_scores = stage_one_scores.squeeze(-1)
             stage_one_scores = F.log_softmax(stage_one_scores, dim=-1)
             return stage_one_scores
 
-        stage_one_scores = get_stage_one_scores()
+        stage_one_scores = get_stage_one_scores() #输出 (lane_num,)
         if args.argoverse2:
             assert len(stage_one_scores) == len(mapping[i]['polygons']) // 2
         else:
@@ -120,7 +120,7 @@ class Decoder(nn.Module):
             for idx, each in enumerate(torch.exp(stage_one_scores[stage_one_topk_ids])):
                 sum += each
                 if sum > threshold:
-                    stage_one_topk_ids = stage_one_topk_ids[:idx + 1]
+                    stage_one_topk_ids = stage_one_topk_ids[:idx + 1] # 取分数高的前k个lane, 使其分数和大于0.95
                     break
             utils.other_errors_put('stage_one_k', len(stage_one_topk_ids))
         # _, stage_one_topk_ids = torch.topk(stage_one_scores, k=min(args.stage_one_K, len(stage_one_scores)))
@@ -173,10 +173,10 @@ class Decoder(nn.Module):
         gt_goal = gt_points[final_idx]
         DE[i][final_idx] = np.sqrt((highest_goal[0] - gt_points[final_idx][0]) ** 2 + (highest_goal[1] - gt_points[final_idx][1]) ** 2)
         if 'complete_traj' in args.other_params:
-            target_feature = self.goals_2D_mlps(torch.tensor(gt_points[final_idx], dtype=torch.float, device=device))
+            target_feature = self.goals_2D_mlps(torch.tensor(gt_points[final_idx], dtype=torch.float, device=device))#3层MLP变成128维
             pass
             if True:
-                target_feature.detach_()
+                target_feature.detach_() #为啥detach_? 方便stage2 单独训练
                 hidden_attention = self.complete_traj_cross_attention(
                     target_feature.unsqueeze(0).unsqueeze(0), inputs[i][:inputs_lengths[i]].detach().unsqueeze(0)).squeeze(
                     0).squeeze(0)
@@ -203,7 +203,7 @@ class Decoder(nn.Module):
         :param DE: displacement error (shape [batch_size, self.future_frame_num])
         """
         if args.do_train:
-            final_idx = mapping[i].get('final_idx', -1)
+            final_idx = mapping[i].get('final_idx', -1) # 没有final_idx属性，得到-1
             assert labels_is_valid[i][final_idx]
 
         gt_points = labels[i].reshape([self.future_frame_num, 2])
@@ -211,9 +211,9 @@ class Decoder(nn.Module):
         topk_lanes = None
         # Get top K lanes with the highest probability.
         if 'lane_scoring' in args.other_params:
+            # 得到lane_states_batch里前k个lane的特征，k为这k个分数和大于0.95的lane集合，数量不固定,  k_lanes*128
             topk_lanes = self.lane_scoring(i, mapping, lane_states_batch, inputs, inputs_lengths,
-                                           hidden_states, device, loss)
-
+                                           hidden_states, device, loss) 
         get_scores_inputs = (inputs, hidden_states, inputs_lengths, i, mapping, device, topk_lanes)
 
         # There is a lane scoring module (see Section 3.2) in the paper in order to reduce the number of goal candidates.
@@ -221,7 +221,7 @@ class Decoder(nn.Module):
         # Here goals_2D are sparse cnadidate goals sampled from map.
         if 'goal_scoring' in args.other_params:
             goals_2D_tensor = torch.tensor(goals_2D, device=device, dtype=torch.float)
-            scores = self.get_scores(goals_2D_tensor, *get_scores_inputs)
+            scores = self.get_scores(goals_2D_tensor, *get_scores_inputs)#计算goals的 scores， 各种cross attention
             index = torch.argmax(scores).item()
             highest_goal = goals_2D[index]
 
@@ -230,7 +230,7 @@ class Decoder(nn.Module):
         # After this step, goals_2D become dense goals.
         scores, highest_goal, goals_2D = \
             self.get_scores_of_dense_goals(i, goals_2D, mapping, labels, device, scores,
-                                           get_scores_inputs, gt_points)
+                                           get_scores_inputs, gt_points) #得到的goals_2D是np.array
 
         if args.do_train:
             self.goals_2D_per_example_calc_loss(i, goals_2D, mapping, inputs, inputs_lengths,
@@ -315,7 +315,7 @@ class Decoder(nn.Module):
         :param inputs_lengths: valid element number of each example
         :param DE: displacement error (shape [batch_size, self.future_frame_num])
         """
-        outputs = self.variety_loss_decoder(hidden_states[:, 0, :])
+        outputs = self.variety_loss_decoder(hidden_states[:, 0, :]) # batch_size * (6*120+6) 前6*120是轨迹，后6个是概率
         pred_probs = None
         if 'variety_loss-prob' in args.other_params:
             pred_probs = F.log_softmax(outputs[:, -6:], dim=-1)
@@ -336,7 +336,7 @@ class Decoder(nn.Module):
                 loss[i] += loss_.sum() / labels_is_valid[i].sum()
 
             if 'variety_loss-prob' in args.other_params:
-                loss[i] += F.nll_loss(pred_probs[i].unsqueeze(0), torch.tensor([argmin], device=device))
+                loss[i] += F.nll_loss(pred_probs[i].unsqueeze(0), torch.tensor([argmin], device=device)) # TODO 后一个应该是1
         if args.do_eval:
             outputs = np.array(outputs.tolist())
             pred_probs = np.array(pred_probs.tolist(), dtype=np.float32) if pred_probs is not None else pred_probs
@@ -402,12 +402,12 @@ class Decoder(nn.Module):
         """
         # Fuse goal feature and agent feature when encoding goals.
         if 'point_sub_graph' in args.other_params:
-            goals_2D_hidden = self.goals_2D_point_sub_graph(goals_2D_tensor.unsqueeze(0), hidden_states[i, 0:1, :]).squeeze(0)
+            goals_2D_hidden = self.goals_2D_point_sub_graph(goals_2D_tensor.unsqueeze(0), hidden_states[i, 0:1, :]).squeeze(0)#goals*128
         else:
             goals_2D_hidden = self.goals_2D_mlps(goals_2D_tensor)
 
         goals_2D_hidden_attention = self.goals_2D_cross_attention(
-            goals_2D_hidden.unsqueeze(0), inputs[i][:inputs_lengths[i]].unsqueeze(0)).squeeze(0)
+            goals_2D_hidden.unsqueeze(0), inputs[i][:inputs_lengths[i]].unsqueeze(0)).squeeze(0)# goals_num*128
 
         if 'lane_scoring' in args.other_params:
             # Perform cross attention from goals to top K lanes. It's a trick to improve model performance.
@@ -416,10 +416,10 @@ class Decoder(nn.Module):
             li = [hidden_states[i, 0, :].unsqueeze(0).expand(goals_2D_hidden.shape),
                   goals_2D_hidden, goals_2D_hidden_attention, stage_one_goals_2D_hidden_attention]
 
-            scores = self.stage_one_goals_2D_decoder(torch.cat(li, dim=-1))
+            scores = self.stage_one_goals_2D_decoder(torch.cat(li, dim=-1)) # DecoderResCat
         else:
             scores = self.goals_2D_decoder(torch.cat([hidden_states[i, 0, :].unsqueeze(0).expand(
-                goals_2D_hidden.shape), goals_2D_hidden, goals_2D_hidden_attention], dim=-1))
+                goals_2D_hidden.shape), goals_2D_hidden, goals_2D_hidden_attention], dim=-1)) # DecoderResCat
 
         scores = scores.squeeze(-1)
         scores = F.log_softmax(scores, dim=-1)
@@ -435,21 +435,21 @@ class Decoder(nn.Module):
                 if topk_num == 0:
                     topk_num = torch.sum(scores > np.log(0.00001)).item()
 
-                _, topk_ids = torch.topk(scores, k=min(topk_num, len(scores)))
-                goals_2D = goals_2D[topk_ids.cpu().numpy()]
-                scores = scores[topk_ids]
+                    _, topk_ids = torch.topk(scores, k=min(topk_num, len(scores)))
+                    goals_2D = goals_2D[topk_ids.cpu().numpy()]
+                    scores = scores[topk_ids]
 
         scores_positive_np = np.exp(np.array(scores.tolist(), dtype=np.float32))
         goals_2D = goals_2D.astype(np.float32)
 
         max_point_idx = torch.argmax(scores)
         vectors_3D = torch.cat([torch.tensor(goals_2D, device=device, dtype=torch.float), scores.unsqueeze(1)], dim=-1)
-        vectors_3D = torch.tensor(vectors_3D.tolist(), device=device, dtype=torch.float)
+        vectors_3D = torch.tensor(vectors_3D.tolist(), device=device, dtype=torch.float) # goals_2D_x, goals_2D_y, score
 
         vectors_3D[:, 0] -= goals_2D[max_point_idx, 0]
-        vectors_3D[:, 1] -= goals_2D[max_point_idx, 1]
+        vectors_3D[:, 1] -= goals_2D[max_point_idx, 1] # 都减去分数最高的goals_2D的坐标，实际接近和gt的偏差
 
-        points_feature = self.set_predict_point_feature(vectors_3D)
+        points_feature = self.set_predict_point_feature(vectors_3D) # 2层MLP, 3->128, 128->128
         costs = np.zeros(args.other_params['set_predict'])
         pseudo_labels = []
         predicts = []
@@ -462,7 +462,7 @@ class Decoder(nn.Module):
         if True:
             for k, (encoder, decoder) in enumerate(zip(self.set_predict_encoders, self.set_predict_decoders)):
                 if 'set_predict-one_encoder' in args.other_params:
-                    encoder = self.set_predict_encoders[0]
+                    encoder = self.set_predict_encoders[0] 
 
                 if True:
                     if 'set_predict-one_encoder' in args.other_params and k > 0:
@@ -475,7 +475,7 @@ class Decoder(nn.Module):
                     predict = decoding[1:].view([6, 2])
 
                     predict[:, 0] += goals_2D[max_point_idx, 0]
-                    predict[:, 1] += goals_2D[max_point_idx, 1]
+                    predict[:, 1] += goals_2D[max_point_idx, 1]#恢复到原来的坐标
 
                 predicts.append(predict)
 
@@ -489,8 +489,9 @@ class Decoder(nn.Module):
                     if 'set_predict-MRratio' in args.other_params:
                         kwargs = {}
                         kwargs['set_predict-MRratio'] = args.other_params['set_predict-MRratio']
+                    # 计算每个set_predictor输出的costs
                     costs[k] = utils_cython.set_predict_get_value(goals_2D, scores_positive_np, selected_points, kwargs=kwargs)
-
+                    
                     pseudo_labels.append(temp)
 
         argmin = torch.argmax(group_scores).item()

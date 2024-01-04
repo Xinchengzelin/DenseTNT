@@ -226,10 +226,10 @@ def demo_basic(rank, world_size, kwargs, queue):
     if 'set_predict' in args.other_params:
         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
     elif 'complete_traj-3' in args.other_params:
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.Adam( # 用于decoder.complete_traj以外的module
             [each[1] for each in model.named_parameters() if not str(each[0]).startswith('module.decoder.complete_traj')],
             lr=args.learning_rate)
-        optimizer_2 = torch.optim.Adam(
+        optimizer_2 = torch.optim.Adam( # 用于decoder.complete_traj
             [each[1] for each in model.named_parameters() if str(each[0]).startswith('module.decoder.complete_traj')],
             lr=args.learning_rate)
     else:
@@ -240,7 +240,7 @@ def demo_basic(rank, world_size, kwargs, queue):
         assert receive == True
 
     if args.distributed_training:
-        dist.barrier()
+        dist.barrier()# 同步所有进程
     args.reuse_temp_file = True
 
     if args.argoverse:
@@ -249,7 +249,7 @@ def demo_basic(rank, world_size, kwargs, queue):
         train_dataset = Dataset(args, args.train_batch_size, to_screen=False)
 
         train_sampler = DistributedSampler(train_dataset, shuffle=args.do_train)
-        assert args.train_batch_size == 64, 'The optimal total batch size for training is 64'
+        # assert args.train_batch_size == 64, 'The optimal total batch size for training is 64'
         assert args.train_batch_size % world_size == 0
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset, sampler=train_sampler,
@@ -291,7 +291,7 @@ def run(args):
         from dataset_argoverse import Dataset
 
     if args.distributed_training:
-        queue = mp.Manager().Queue()
+        queue = mp.Manager().Queue()# 为了多进程修改other_errors_dict
         kwargs = {'args': args}
         spawn_context = mp.spawn(demo_basic,
                                  args=(args.distributed_training, kwargs, queue),
@@ -311,8 +311,9 @@ def main():
     args: utils.Args = parser.parse_args()
     utils.init(args, logger)
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    # device = torch.device(
+    #     "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device('cpu')
     logger.info("device: {}".format(device))
 
     if args.argoverse:

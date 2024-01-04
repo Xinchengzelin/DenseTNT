@@ -25,19 +25,20 @@ class NewSubGraph(nn.Module):
         self.layers_4 = nn.ModuleList([GlobalGraph(hidden_size) for _ in range(depth)])
         self.layer_0_again = MLP(hidden_size)
 
-    def forward(self, input_list: list):
-        batch_size = len(input_list)
+    def forward(self, input_list: list): # list里为每个polyline的Tensor
+        batch_size = len(input_list) # 这个batch size其实是多少个polyline
         device = input_list[0].device
-        hidden_states, lengths = utils.merge_tensors(input_list, device)
+        # hidden_states: polyline_num*vector_num*128, lengths:每个agent的polyline_span
+        hidden_states, lengths = utils.merge_tensors(input_list, device) 
         hidden_size = hidden_states.shape[2]
         max_vector_num = hidden_states.shape[1]
 
         attention_mask = torch.zeros([batch_size, max_vector_num, max_vector_num], device=device)
         hidden_states = self.layer_0(hidden_states)
-        hidden_states = self.layer_0_again(hidden_states)
+        hidden_states = self.layer_0_again(hidden_states) # (polyline_num, vector_num, 128)
         for i in range(batch_size):
             assert lengths[i] > 0
-            attention_mask[i, :lengths[i], :lengths[i]].fill_(1)
+            attention_mask[i, :lengths[i], :lengths[i]].fill_(1)#有polyline的地方先置为1，其他为0
 
         for layer_index, layer in enumerate(self.layers):
             temp = hidden_states
@@ -48,7 +49,7 @@ class NewSubGraph(nn.Module):
             hidden_states = F.relu(hidden_states)
             hidden_states = hidden_states + temp
             hidden_states = self.layers_2[layer_index](hidden_states)
-
+        # 第1个polyline的最大值(polyline_num, 128)， (all_polyline_vector_num, 128)
         return torch.max(hidden_states, dim=1)[0], torch.cat(utils.de_merge_tensors(hidden_states, lengths))
 
 
@@ -65,7 +66,7 @@ class VectorNet(nn.Module):
         super(VectorNet, self).__init__()
         global args
         args = args_
-        hidden_size = args.hidden_size
+        hidden_size = args.hidden_size # 128
 
         self.point_level_sub_graph = NewSubGraph(hidden_size)
         self.point_level_cross_attention = CrossAttention(hidden_size)
@@ -111,13 +112,15 @@ class VectorNet(nn.Module):
             input_list_list.append(input_list)
             map_input_list_list.append(map_input_list)
 
-        if True:
+        if True: # agent和地图都有
             element_states_batch = []
             for i in range(batch_size):
+                # a: 第1个polyline的最大值(polyline_num, 128)， 
+                # b:  (all_polyline_vector_num, 128)
                 a, b = self.point_level_sub_graph(input_list_list[i])
                 element_states_batch.append(a)
 
-        if 'lane_scoring' in args.other_params:
+        if 'lane_scoring' in args.other_params: #只有地图数据
             lane_states_batch = []
             for i in range(batch_size):
                 a, b = self.point_level_sub_graph(map_input_list_list[i])
@@ -160,13 +163,13 @@ class VectorNet(nn.Module):
 
         element_states_batch, lane_states_batch = self.forward_encode_sub_graph(mapping, matrix, polyline_spans, device, batch_size)
 
-        inputs, inputs_lengths = utils.merge_tensors(element_states_batch, device=device)
+        inputs, inputs_lengths = utils.merge_tensors(element_states_batch, device=device) #(batch_size, max_polyline_num, 128) 第1个batch max_polyline_num为202
         max_poly_num = max(inputs_lengths)
         attention_mask = torch.zeros([batch_size, max_poly_num, max_poly_num], device=device)
         for i, length in enumerate(inputs_lengths):
             attention_mask[i][:length][:length].fill_(1)
 
-        hidden_states = self.global_graph(inputs, attention_mask, mapping)
+        hidden_states = self.global_graph(inputs, attention_mask, mapping) #(batch_size, max_polyline_num, 128)
 
         utils.logging('time3', round(time.time() - starttime, 2), 'secs')
 

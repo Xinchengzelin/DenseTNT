@@ -48,11 +48,11 @@ class GlobalGraph(nn.Module):
     It's actually a self-attention.
     """
 
-    def __init__(self, hidden_size, attention_head_size=None, num_attention_heads=1):
+    def __init__(self, hidden_size, attention_head_size=None, num_attention_heads=1): # num_attention_heads=2
         super(GlobalGraph, self).__init__()
         self.num_attention_heads = num_attention_heads
-        self.attention_head_size = hidden_size // num_attention_heads if attention_head_size is None else attention_head_size
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
+        self.attention_head_size = hidden_size // num_attention_heads if attention_head_size is None else attention_head_size # 64
+        self.all_head_size = self.num_attention_heads * self.attention_head_size # 128
 
         self.num_qkv = 1
 
@@ -75,19 +75,21 @@ class GlobalGraph(nn.Module):
         return extended_attention_mask
 
     def transpose_for_scores(self, x):
+        # 相当于将(polyline_num,vector_num, 128) view成 (polyline_num,vector_num,2, 64)
+        # 然后 permute成(polyline_num, 2, vector_num, 64)
         sz = x.size()[:-1] + (self.num_attention_heads,
                               self.attention_head_size)
         # (batch, max_vector_num, head, head_size)
         x = x.view(*sz)
         # (batch, head, max_vector_num, head_size)
-        return x.permute(0, 2, 1, 3)
+        return x.permute(0, 2, 1, 3) 
 
     def forward(self, hidden_states, attention_mask=None, mapping=None, return_scores=False):
         mixed_query_layer = self.query(hidden_states)
         mixed_key_layer = nn.functional.linear(hidden_states, self.key.weight)
         mixed_value_layer = self.value(hidden_states)
 
-        query_layer = self.transpose_for_scores(mixed_query_layer)
+        query_layer = self.transpose_for_scores(mixed_query_layer) # (polyline_num, 2, vector_num, 64)
         key_layer = self.transpose_for_scores(mixed_key_layer)
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
@@ -95,22 +97,22 @@ class GlobalGraph(nn.Module):
             query_layer / math.sqrt(self.attention_head_size), key_layer.transpose(-1, -2))
         # print(attention_scores.shape, attention_mask.shape)
         if attention_mask is not None:
-            attention_scores = attention_scores + self.get_extended_attention_mask(attention_mask)
+            attention_scores = attention_scores + self.get_extended_attention_mask(attention_mask) # polyline_num*2*vector_num*vector_num非实际存在的地方填充-10000，然后softmax
         # if utils.args.attention_decay and utils.second_span:
         #     attention_scores[:, 0, 0, 0] = attention_scores[:, 0, 0, 0] - self.attention_decay
-        attention_probs = nn.Softmax(dim=-1)(attention_scores)
-        if utils.args.visualize and mapping is not None:
+        attention_probs = nn.Softmax(dim=-1)(attention_scores) # polyline_num*2*vector_num*vector_num
+        if utils.args.visualize and mapping is not None: # 为了画图
             for i, each in enumerate(attention_probs.tolist()):
                 mapping[i]['attention_scores'] = np.array(each[0])
         if utils.args.attention_decay and utils.second_span:
             utils.logging(self.attention_decay, prob=0.01)
             value_layer = torch.cat([value_layer[:, 0:1, 0:1, :] * self.attention_decay, value_layer[:, 0:1, 1:, :]],
                                     dim=2)
-        context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        context_layer = torch.matmul(attention_probs, value_layer) #polyline_num*2*vector_num*64
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous() #(polyline_num, vector_num, 2, 64)
         new_context_layer_shape = context_layer.size()[
                                   :-2] + (self.all_head_size,)
-        context_layer = context_layer.view(*new_context_layer_shape)
+        context_layer = context_layer.view(*new_context_layer_shape) # polyline_num*vector_num*128
         if return_scores:
             assert attention_probs.shape[1] == 1
             attention_probs = torch.squeeze(attention_probs, dim=1)
@@ -182,12 +184,12 @@ class PointSubGraph(nn.Module):
                                      MLP(hidden_size, hidden_size // 2),
                                      MLP(hidden_size, hidden_size)])
 
-    def forward(self, hidden_states: Tensor, agent: Tensor):
+    def forward(self, hidden_states: Tensor, agent: Tensor): # 前者是2Dgoals 1*goals*2   1*128
         device = hidden_states.device
         predict_agent_num, point_num = hidden_states.shape[0], hidden_states.shape[1]
         hidden_size = self.hidden_size
         assert (agent.shape[0], agent.shape[1]) == (predict_agent_num, hidden_size)
-        agent = agent[:, :hidden_size // 2].unsqueeze(1).expand([predict_agent_num, point_num, hidden_size // 2])
+        agent = agent[:, :hidden_size // 2].unsqueeze(1).expand([predict_agent_num, point_num, hidden_size // 2]) #1*goals*64
         for layer_index, layer in enumerate(self.layers):
             if layer_index == 0:
                 hidden_states = layer(hidden_states)
