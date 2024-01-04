@@ -45,7 +45,7 @@ def add_argument(parser):
                         default='/media/zetlin/Data2/Argoverse2/val',
                         type=str)
     parser.add_argument("--data_dir_for_val",
-                        default='val/data/',
+                        default='data/val',
                         type=str)
     parser.add_argument("--output_dir", default="/home/zetlin/argoverse2", type=str)
     parser.add_argument("--log_dir", default=None, type=str)

@@ -502,7 +502,7 @@ def argoverse2_get_instance(args: utils.Args, instance_dir):#instance_dir: 对�
 
         lane_type_to_int = defaultdict(int)
         lane_type_to_int[LaneType.VEHICLE] = 1
-        lane_type_to_int[LaneType.BIKE] = 2 #TODO 这里是否有问题，应该2,3
+        lane_type_to_int[LaneType.BIKE] = 2
         lane_type_to_int[LaneType.BUS] = 3
 
         mark_type_to_int = get_mark_type_to_int() # 把mark_type转换成int 15种类型 1 2 3... 15
